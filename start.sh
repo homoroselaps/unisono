@@ -1,2 +1,3 @@
 #!/bin/sh
-(python3 server.py &) > pid
+python3.7 server.py &
+echo $! > pid

@@ -288,7 +288,7 @@ def start(update: Update, context: CallbackContext):
     context.bot.send_voice(chat_id=update.effective_chat.id, voice=bot_config['welcome_message'])
 
     text = (
-        '<i>Any questions or Feedback? Join the <a href="https://t.me/Unisono_Feedback">Feedback Group</a></i>'
+        '<i>Any Questions or Feedback? Join the <a href="https://t.me/Unisono_Feedback">Feedback Group</a></i>'
     )
     context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode = ParseMode.HTML)
 

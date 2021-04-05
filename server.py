@@ -28,15 +28,29 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
+questions = [
+    "I would like to know",
+    "I would like to learn",
+    "I always asked myself",
+    "I am really curious to know",
+    "I am really curious to learn",
+    "I pondered over the question",
+    "I often get asked",
+    "People need to know",
+    "People like to know",
+    "People want to know",
+    "The world needs to know",
+]
+
 prompts = [
-    "Pick up an object around you. What story connects you with it?",
-    "Tell a story that made you feel wonder this week!",
+    "When you pick up an object around you. What story connects you with it?",
+    "A story that made you feel wonder this week!",
     "What great new idea have you learned about recently?",
     "What's your favorite movie and why?",
     'What’s your favorite way to spend a day off?',
     'What was the best vacation you ever took and why?',
     'Where’s the next place on your travel bucket list and why?',
-    'What are your hobbies, and how did you get into them?',
+    'What is a hobby of your\'s, and how did you get into it?',
     'What was your favorite age growing up?',
     'What was the last thing you read?',
     'What’s your favorite ice cream topping?',
@@ -72,46 +86,57 @@ def get_utc_timestamp():
 def removeCmd(str):
     return " ".join(str.split(" ")[1:])
 
-def message_model(message_id, chat_id, data, typ, topic='general', origin='', utc_timestamp=get_utc_timestamp()):
-    return dict(chat_id=chat_id, data=data, topic='general', typ=typ, origin=origin, message_id=message_id, utc_timestamp=utc_timestamp)
+def message_model(message_id, chat_id, data, topic='general', origin='', utc_timestamp=None):
+    if not utc_timestamp:
+        utc_timestamp = get_utc_timestamp()
+    return dict(chat_id=chat_id, data=data, topic='general', typ='voice', origin=origin, message_id=message_id, utc_timestamp=utc_timestamp)
 
 def user_model(chat_id=0):
     return dict(chat_id=chat_id)
 
-def rating_model(from_id=0, to_id=0, message_id=0, rating=-1, utc_timestamp=get_utc_timestamp()):
+def rating_model(from_id=0, to_id=0, message_id=0, rating=-1, utc_timestamp=None):
+    if not utc_timestamp:
+        utc_timestamp = get_utc_timestamp()
     return dict(from_id=from_id, to_id=to_id, message_id=message_id, rating=rating, utc_timestamp=utc_timestamp)
 
-def send_note(bot, chat_id, message_id, data, typ):
+def send_note(bot, chat_id, message_id, data):
     keyboard = [[
         InlineKeyboardButton('Next', callback_data=f'N{message_id}'),
         InlineKeyboardButton('Like', callback_data=f'Y{message_id}')
     ]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    if typ == 'text':
-        bot.send_message(chat_id=chat_id, text=data, reply_markup=reply_markup)
-    elif typ == 'voice':
-        bot.send_voice(chat_id=chat_id, voice=data, reply_markup=reply_markup)
+    bot.send_voice(chat_id=chat_id, voice=data, reply_markup=reply_markup)
 
 def send_random_note(bot, chat_id):
     user = db_roaming['user'].find_one(chat_id=chat_id)
     if not user:
         raise(Exception("user unknown"))
-    
-    message_ids = set([msg['message_id'] for msg in db_roaming['message'].find(chat_id={'not':chat_id})])
+
     rating_msg_ids = set([rating['message_id'] for rating in db_roaming['rating'].find(from_id=chat_id)])
-    message_ids -= rating_msg_ids
-    if len(message_ids):
-        random_msg_id = random.choice(list(message_ids))
-        random_msg = db_roaming['message'].find_one(message_id=random_msg_id)
-        if not random_msg:
-            raise(Exception("message not found"))
-        send_note(bot, chat_id=chat_id, message_id=random_msg_id, data=random_msg['data'], typ=random_msg['typ'])
+    
+    messages = dict()
+    query = f"""
+    SELECT m.chat_id, m.topic, m.message_id, m.data
+    FROM (
+        select chat_id, topic, max(utc_timestamp) as max_utc_timestamp
+        from message
+        where chat_id <> '{chat_id}'
+        group by chat_id, topic
+    ) as x inner join message as m on m.chat_id = x.chat_id and m.topic = x.topic and m.utc_timestamp = x.max_utc_timestamp;
+    """
+    for msg in db_roaming.query(query):
+        if msg['message_id'] in rating_msg_ids: continue # exclude messages that have been rated before
+        messages[msg['message_id']] = msg['data']
+    
+    if len(messages):
+        random_msg_id = random.choice(list(messages.keys()))
+        send_note(bot, chat_id=chat_id, message_id=random_msg_id, data=messages[random_msg_id])
     else:
         keyboard = [[
             InlineKeyboardButton('Check Again', callback_data=f'M')
         ]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        bot.send_message(chat_id=chat_id, text="There are no messages that you havn't yet seen.", reply_markup=reply_markup) 
+        bot.send_message(chat_id=chat_id, text="There are no messages that you havn't yet seen.", reply_markup=reply_markup)
 
 def error_handler(update: object, context: CallbackContext) -> None:
     """Log the error and send a telegram message to notify the developer."""
@@ -204,21 +229,6 @@ def rating_no(update: Update, context: CallbackContext):
 def handle_msg(update:Update, context: CallbackContext):
     update.message.reply_text(text='Let us hear you wonderful voice.')
     return
-    '''
-    chat_id = update.effective_chat.id
-    user = db_roaming['user'].find_one(chat_id=update.effective_chat.id)
-    if not user:
-        user = user_model(chat_id=update.effective_chat.id)
-        db_roaming['user'].upsert(user, ['chat_id'])
-    db_roaming['message'].upsert(message_model(
-        chat_id=chat_id,
-        typ='text',
-        data=update.message.text, 
-        origin=update.message.from_user.mention_html()
-    ), ['chat_id','topic'])
-    update.message.reply_text(text='thx for your personal text note')
-    context.bot.send_message(chat_id=chat_id, text="Start listening to others' messages to find a match:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Start', callback_data=f'M')]])) 
-    '''
 
 def handle_voice_msg(update:Update, context: CallbackContext):
     chat_id = update.effective_chat.id
@@ -235,19 +245,20 @@ def handle_voice_msg(update:Update, context: CallbackContext):
         user = user_model(chat_id=update.effective_chat.id)
         db_roaming['user'].upsert(user, ['chat_id'])
 
-    db_roaming['message'].upsert(message_model(
+    db_roaming['message'].insert(message_model(
         message_id=uuid.uuid4().hex,
         chat_id=chat_id,
-        typ='voice',
         data=update.message.voice.file_id,
         origin=update.message.from_user.mention_html()
-    ), ['chat_id','topic'])
+    ))
     text = (
         'Nice to hear you! What a great voice you have.\n'
         'If you like to replace this message, just send a new one any time.\n'
         '<i>Do you enjoy Unisono? Tell me in the <a href="https://t.me/Unisono_Feedback">Feedback Group</a></i>'
     )
     update.message.reply_text(text=text, parse_mode=ParseMode.HTML)
+    if (chat_id == DEVELOPER_CHAT_ID):
+        update.message.reply_text(text=f'{update.message.voice.file_id}')
     context.bot.send_message(chat_id=chat_id, text="Start listening to others' messages to find a match:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Start', callback_data=f'M')]])) 
 
 def stats(update: Update, context: CallbackContext):
@@ -280,23 +291,130 @@ def start(update: Update, context: CallbackContext):
     tg_user = update.message.from_user
     text = (
         f'Nice to hear from you {tg_user.first_name} {tg_user.last_name}\n'
-        f'Want to find someone you are on the same wavelength with?\n'
-        f'Send me a <b>voice message</b> so that others get to know you.\n'
     )
     update.message.reply_text(text=text, parse_mode=ParseMode.HTML)
 
     context.bot.send_voice(chat_id=update.effective_chat.id, voice=bot_config['welcome_message'])
 
     text = (
-        '<i>Any Questions or Feedback? Join the <a href="https://t.me/Unisono_Feedback">Feedback Group</a></i>'
+        f'Want to find someone you are on the same wavelength with?\n'
+        f'Send me a <b>voice message</b> so that others get to know you.\n'
+        f'If you mutually enjoy each others voice I\'ll put you in touch.\n'
+        '\n'
+        f'<i>Any Questions or Feedback? Join the <a href="https://t.me/Unisono_Feedback">Feedback Group</a></i>'
     )
-    context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode = ParseMode.HTML)
+    update.message.reply_text(text=text, parse_mode=ParseMode.HTML)
 
     text = (
-        f'You may use this random prompt as a starter:\n'
-        f'<i>{random.choice(prompts)}</i>'
+        'Start right now. Tell me what excites you or Answer a random prompt:'
     )
-    context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode = ParseMode.HTML)
+    keyboard = [[
+        InlineKeyboardButton('I\'m feeling lucky. Bring it on!', callback_data=f'P')
+    ]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=reply_markup, parse_mode = ParseMode.HTML)
+
+def random_prompt(update: Update, context: CallbackContext):
+    query=update.callback_query
+    query.answer()
+    
+    chat_id = query.message.chat.id
+    content = query.data[1:]
+    
+    count = 0
+    try:
+        count = max(int(content.lower()),0)
+    except (ValueError):
+        count = 0
+
+    if count == 0:
+        text = (
+            f'{random.choice(questions)}:\n'
+            f'<i>{random.choice(prompts)}</i>'
+        )
+        keyboard = [[
+            InlineKeyboardButton('Another one', callback_data=f'P{count+1}')
+        ]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode = ParseMode.HTML, reply_markup=reply_markup)
+    elif count < 3:
+        text = (
+            f'{random.choice(questions)}:\n'
+            f'<i>{random.choice(prompts)}</i>'
+        )
+        keyboard = [[
+            InlineKeyboardButton('Another one, please', callback_data=f'P{count+1}')
+        ]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode = ParseMode.HTML, reply_markup=reply_markup)
+    elif count >= 3:
+        text = (
+            f'Still hesitant to record your first voice message?\n'
+            f'Recording a voice message may feel awkward at first. That is ok and normal.\n'
+            f'If you like, you can hear my thoughts about this topic or some examples.'
+        )
+        keyboard = [[
+            InlineKeyboardButton('More tips please for my first voice message', callback_data=f'F')
+        ]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode = ParseMode.HTML, reply_markup=reply_markup)
+
+def send_first_message_help(update: Update, context: CallbackContext):
+    if update.effective_chat.id != DEVELOPER_CHAT_ID: return
+    user_ids = set([user['chat_id'] for user in db_roaming['user'].find()])
+    message_user_ids = set([msg['chat_id'] for msg in db_roaming['message'].find()])
+    user_ids -= message_user_ids
+
+    text = (
+        f'<b>I\'m very grateful for you showing interest in Unisono!</b>\n'
+        f'Though without a voice message how can others get to know you?\n'
+        f'To be frank - you are not the only one. Supporting you to overcome this initial hurdle will make or break the Unisono idea.\n'
+        f'<i>If you have any ideas what would help you specifically please reach out. I\'ll be at call in the <a href="https://t.me/Unisono_Feedback">Feedback Group</a>.</i>\n'
+        f'In the meantime you can hear my thoughts about this topic or some examples:'
+    )
+    keyboard = [[
+        InlineKeyboardButton('Tips for my first voice message', callback_data=f'F')
+    ]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    for user_id in user_ids:
+        context.bot.send_message(user_id, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    context.bot.send_message(update.effective_chat.id, f'Done.\nMessage sent to {len(user_ids)} user(s).')
+
+def first_message_help(update: Update, context: CallbackContext):
+    query=update.callback_query
+    query.answer()
+    
+    chat_id = query.message.chat.id
+    content = query.data[1:]
+    text = (
+        f"Why does my voice sound unfamiliar to me when played back?\n"
+    )
+    context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
+    context.bot.send_voice(chat_id, bot_config['first_message_help'])
+
+    ratings = db_roaming['rating'].find(from_id={'not':chat_id}, to_id={'not':chat_id}, rating=1)
+    message_ids = set([msg['message_id'] for msg in ratings])
+    if not len(message_ids):
+        return
+    text = (
+        f"Curious what others' messages are about?:\n"
+    )
+    # send first example message
+    context.bot.send_message(chat_id, text)
+    random_msg_id = random.choice(list(message_ids))
+    message_ids.remove(random_msg_id)
+    random_msg = db_roaming['message'].find_one(message_id=random_msg_id)
+    if random_msg:
+        context.bot.send_voice(chat_id, voice=random_msg['data'])
+    #send second example message
+    if not len(message_ids):
+        return
+    random_msg_id = random.choice(list(message_ids))
+    message_ids.remove(random_msg_id)
+    random_msg = db_roaming['message'].find_one(message_id=random_msg_id)
+    if random_msg:
+        context.bot.send_voice(chat_id, voice=random_msg['data'])
 
 def main() -> None:
     # Create the Updater and pass it your bot's token.
@@ -312,9 +430,12 @@ def main() -> None:
         dispatcher.add_handler(CommandHandler('reset_ratings', reset_ratings))
         dispatcher.add_handler(CommandHandler('reset_database', reset_database))
     dispatcher.add_handler(CommandHandler('stats', stats))
+    dispatcher.add_handler(CommandHandler('send_first_message_help', send_first_message_help))
     dispatcher.add_handler(CallbackQueryHandler(rating_no, pattern='^N'))
     dispatcher.add_handler(CallbackQueryHandler(rating_yes, pattern='^Y'))
     dispatcher.add_handler(CallbackQueryHandler(next_message, pattern='^M'))
+    dispatcher.add_handler(CallbackQueryHandler(first_message_help, pattern='^F'))
+    dispatcher.add_handler(CallbackQueryHandler(random_prompt, pattern='^P'))
     dispatcher.add_handler(MessageHandler(Filters.text, handle_msg))
     dispatcher.add_handler(MessageHandler(Filters.voice, handle_voice_msg))
 

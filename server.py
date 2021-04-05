@@ -44,7 +44,7 @@ questions = [
 
 prompts = [
     "When you pick up an object around you. What story connects you with it?",
-    "A story that made you feel wonder this week!",
+    "What is a story that made you feel wonder this week?",
     "What great new idea have you learned about recently?",
     "What's your favorite movie and why?",
     'What’s your favorite way to spend a day off?',
@@ -136,7 +136,7 @@ def send_random_note(bot, chat_id):
             InlineKeyboardButton('Check Again', callback_data=f'M')
         ]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        bot.send_message(chat_id=chat_id, text="There are no messages that you havn't yet seen.", reply_markup=reply_markup)
+        bot.send_message(chat_id=chat_id, text="There are no messages that you haven't yet seen.", reply_markup=reply_markup)
 
 def error_handler(update: object, context: CallbackContext) -> None:
     """Log the error and send a telegram message to notify the developer."""
@@ -201,6 +201,8 @@ def rating_yes(update: Update, context: CallbackContext):
         context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
         context.bot.send_message(chat_id=sender['chat_id'], text=text, parse_mode=ParseMode.HTML)
     else:
+        context.bot.send_message(chat_id=chat_id, text=f"You liked this message.")
+
         text = (
             f"Someone just listened to your voice and liked it!"
         )
@@ -261,9 +263,10 @@ def handle_voice_msg(update:Update, context: CallbackContext):
         data=update.message.voice.file_id,
         origin=update.message.from_user.mention_html()
     ))
+    replaced = len(list(db_roaming['message'].find(chat_id=chat_id, topic='general'))) >= 2
     text = (
-        'Nice to hear you! What a great voice you have.\n'
-        'If you like to replace this message, just send a new one any time.\n'
+        'Nice to hear you! What a great voice you have.\n'+
+        ('If you like to replace this message, just send a new one any time.\n' if not replaced else 'This is your message now\n. Your previous one was replaced.\n')+
         '<i>Do you enjoy Unisono? Tell me in the <a href="https://t.me/Unisono_Feedback">Feedback Group</a></i>'
     )
     update.message.reply_text(text=text, parse_mode=ParseMode.HTML)
@@ -308,7 +311,7 @@ def start(update: Update, context: CallbackContext):
 
     text = (
         f'Want to find someone you are on the same wavelength with?\n'
-        f'Send me a <b>voice message</b> so that others get to know you.\n'
+        f'Send me a <b>voice message</b>, so that others get to know you.\n'
         f'If you mutually enjoy each others voice I\'ll put you in touch.\n'
         '\n'
         f'<i>Any Questions or Feedback? Join the <a href="https://t.me/Unisono_Feedback">Feedback Group</a></i>'
@@ -319,7 +322,7 @@ def start(update: Update, context: CallbackContext):
         'Start right now. Tell me what excites you or Answer a random prompt:'
     )
     keyboard = [[
-        InlineKeyboardButton('I\'m feeling lucky. Bring it on!', callback_data=f'P')
+        InlineKeyboardButton('Give me a random prompt', callback_data=f'P')
     ]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 

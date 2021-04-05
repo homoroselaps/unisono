@@ -183,8 +183,8 @@ def rating_yes(update: Update, context: CallbackContext):
         raise(Exception("invalid chat_id connected with message"))
     
     db_roaming['rating'].insert(rating_model(from_id=chat_id, to_id=sender['chat_id'], message_id=message_id, rating=1))
-    sender_rating = db_roaming['rating'].find_one(from_id=sender['chat_id'], to_id=chat_id, rating=1)
-    mutual_like = True if sender_rating else False
+    sender_ratings = list(db_roaming['rating'].find(from_id=sender['chat_id'], to_id=chat_id, rating=1))
+    mutual_like = True if len(sender_ratings) else False
     if mutual_like:
         context.bot.send_message(chat_id=chat_id, text=f"You got a match with: {message['origin']}", parse_mode=ParseMode.HTML)
         text = (
@@ -192,13 +192,23 @@ def rating_yes(update: Update, context: CallbackContext):
             f"For you to recall, hear their voice again:"
         )
         context.bot.send_message(chat_id=sender['chat_id'], text=text, parse_mode=ParseMode.HTML)
-        receiver_message = db_roaming['message'].find_one(message_id=sender_rating['message_id'])
-        context.bot.send_voice(chat_id=sender['chat_id'], voice=receiver_message['data'])
+        for sender_rating in sender_ratings:
+            receiver_message = db_roaming['message'].find_one(message_id=sender_rating['message_id'])
+            context.bot.send_voice(chat_id=sender['chat_id'], voice=receiver_message['data'])
         text = (
             '<i>Any thoughts about Unisono? Tell me in the <a href="https://t.me/Unisono_Feedback">Feedback Group</a></i>'
         )
         context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
         context.bot.send_message(chat_id=sender['chat_id'], text=text, parse_mode=ParseMode.HTML)
+    else:
+        text = (
+            f"Someone just listened to your voice and liked it!"
+        )
+        keyboard = [[
+            InlineKeyboardButton('Check for new messages', callback_data=f'M')
+        ]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.send_message(chat_id=sender['chat_id'], text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
     
     send_random_note(context.bot, chat_id)
 

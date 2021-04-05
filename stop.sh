@@ -1,2 +1,2 @@
 #!/bin/sh
-cat pid | xargs -15
+cat pid | xargs kill -15

@@ -71,11 +71,8 @@ logger = logging.getLogger(__name__)
 
 db_roaming = dataset.connect('sqlite:///roaming.db')
 
-MINIMUM_VOICE_DURATION = 5
-
 # This can be your own ID, or one for a developer group/channel.
 # You can use the /start command of this bot to see your chat id.
-DEVELOPER_CHAT_ID = 269701884 #-153553529
 bot_config = get_bot_config()
 
 def get_utc_timestamp():
@@ -86,10 +83,10 @@ def get_utc_timestamp():
 def removeCmd(str):
     return " ".join(str.split(" ")[1:])
 
-def message_model(message_id, chat_id, data, topic='general', origin='', utc_timestamp=None):
+def message_model(message_id, chat_id, data, published=False, topic='general', origin='', utc_timestamp=None):
     if not utc_timestamp:
         utc_timestamp = get_utc_timestamp()
-    return dict(chat_id=chat_id, data=data, topic='general', typ='voice', origin=origin, message_id=message_id, utc_timestamp=utc_timestamp)
+    return dict(chat_id=chat_id, data=data, published=published, topic='general', typ='voice', origin=origin, message_id=message_id, utc_timestamp=utc_timestamp)
 
 def user_model(chat_id=0):
     return dict(chat_id=chat_id)
@@ -120,7 +117,7 @@ def send_random_note(bot, chat_id):
     FROM (
         select chat_id, topic, max(utc_timestamp) as max_utc_timestamp
         from message
-        where chat_id <> '{chat_id}'
+        where chat_id <> '{chat_id}' and published = '1'
         group by chat_id, topic
     ) as x inner join message as m on m.chat_id = x.chat_id and m.topic = x.topic and m.utc_timestamp = x.max_utc_timestamp;
     """
@@ -161,7 +158,7 @@ def error_handler(update: object, context: CallbackContext) -> None:
     )
 
     # Finally, send the message
-    context.bot.send_message(chat_id=DEVELOPER_CHAT_ID, text=message, parse_mode=ParseMode.HTML)
+    context.bot.send_message(chat_id=bot_config['developer_chat_id'], text=message, parse_mode=ParseMode.HTML)
 
 def rating_yes(update: Update, context: CallbackContext):
     query=update.callback_query
@@ -183,17 +180,25 @@ def rating_yes(update: Update, context: CallbackContext):
         raise(Exception("invalid chat_id connected with message"))
     
     db_roaming['rating'].insert(rating_model(from_id=chat_id, to_id=sender['chat_id'], message_id=message_id, rating=1))
+    context.chat_data['liked_message_id'] = message_id
+
     sender_ratings = list(db_roaming['rating'].find(from_id=sender['chat_id'], to_id=chat_id, rating=1))
     mutual_like = True if len(sender_ratings) else False
     if mutual_like:
-        context.bot.send_message(chat_id=chat_id, text=f"You got a match with: {message['origin']}", parse_mode=ParseMode.HTML)
+        text = (
+            f"You got a match with: {message['origin']}\n"
+            f"Check out there profile and hop on a voice call!"
+        )
+        context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+        
         text = (
             f"You got a match with: {update.callback_query.from_user.mention_html()}\n"
+            f"Check out there profile and hop on a voice call!"
             f"For you to recall, hear their voice again:"
         )
         context.bot.send_message(chat_id=sender['chat_id'], text=text, parse_mode=ParseMode.HTML)
-        for sender_rating in sender_ratings:
-            receiver_message = db_roaming['message'].find_one(message_id=sender_rating['message_id'])
+        for sender_rating_msg_id in set([rating['message_id'] for rating in sender_ratings]):
+            receiver_message = db_roaming['message'].find_one(message_id=sender_rating_msg_id)
             context.bot.send_voice(chat_id=sender['chat_id'], voice=receiver_message['data'])
         text = (
             '<i>Any thoughts about Unisono? Tell me in the <a href="https://t.me/Unisono_Feedback">Feedback Group</a></i>'
@@ -201,7 +206,11 @@ def rating_yes(update: Update, context: CallbackContext):
         context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
         context.bot.send_message(chat_id=sender['chat_id'], text=text, parse_mode=ParseMode.HTML)
     else:
-        context.bot.send_message(chat_id=chat_id, text=f"You liked this message.")
+        text = (
+            "You liked this message.\n"
+            "How about sharing a reaction with the owner? Record it now and I'll deliver it directly."
+        )
+        context.bot.send_message(chat_id=chat_id, text=text)
 
         text = (
             f"Someone just listened to your voice and liked it!"
@@ -211,8 +220,6 @@ def rating_yes(update: Update, context: CallbackContext):
         ]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         context.bot.send_message(chat_id=sender['chat_id'], text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-    
-    send_random_note(context.bot, chat_id)
 
 def next_message(update: Update, context: CallbackContext):
     query=update.callback_query
@@ -244,7 +251,7 @@ def handle_msg(update:Update, context: CallbackContext):
 
 def handle_voice_msg(update:Update, context: CallbackContext):
     chat_id = update.effective_chat.id
-    if update.message.voice.duration < MINIMUM_VOICE_DURATION:
+    if update.message.voice.duration < bot_config['minimum_voice_duration']:
         text = (
         'Oh this was a bit too short!\n'
         'Please elaborate more.'
@@ -256,26 +263,98 @@ def handle_voice_msg(update:Update, context: CallbackContext):
     if not user:
         user = user_model(chat_id=update.effective_chat.id)
         db_roaming['user'].upsert(user, ['chat_id'])
+    
+    message_id = uuid.uuid4().hex
 
     db_roaming['message'].insert(message_model(
-        message_id=uuid.uuid4().hex,
+        message_id=message_id,
         chat_id=chat_id,
+        published=False,
         data=update.message.voice.file_id,
         origin=update.message.from_user.mention_html()
     ))
-    replaced = len(list(db_roaming['message'].find(chat_id=chat_id, topic='general'))) >= 2
-    text = (
-        'Nice to hear you! What a great voice you have.\n'+
-        ('If you like to replace this message, just send a new one any time.\n' if not replaced else 'This is your message now\n. Your previous one was replaced.\n')+
-        '<i>Do you enjoy Unisono? Tell me in the <a href="https://t.me/Unisono_Feedback">Feedback Group</a></i>'
-    )
-    update.message.reply_text(text=text, parse_mode=ParseMode.HTML)
-    if (chat_id == DEVELOPER_CHAT_ID):
+    if (chat_id == bot_config['developer_chat_id']):
         update.message.reply_text(text=f'{update.message.voice.file_id}')
-    context.bot.send_message(chat_id=chat_id, text="Start listening to others' messages to find a match:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Start', callback_data=f'M')]])) 
+    replace_option = len(list(db_roaming['message'].find(chat_id=chat_id, topic='general', published=True))) >= 1
+
+    keyboard = [
+        ([InlineKeyboardButton('Send as reaction to your like', callback_data=f'RM{message_id}')] if 'liked_message_id' in context.chat_data else []),
+        [
+            InlineKeyboardButton('Discard', callback_data=f'DM{message_id}'),
+            InlineKeyboardButton(f'{"Replace my message" if replace_option else "Publish"}', callback_data=f'SM{message_id}'),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    text = (
+        'Nice to hear you! What a great voice you have.\n'
+    )
+    update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+def discard_message(update: Update, context: CallbackContext):
+    query=update.callback_query
+    query.answer()
+    
+    chat_id = query.message.chat.id
+    content = query.data[2:]
+
+    text = (
+        "Your message was not published.\n"
+        "Just rewind and start another take."
+    )
+    context.bot.send_message(chat_id=chat_id, text=text, parse_mode = ParseMode.HTML)
+
+def save_message(update: Update, context: CallbackContext):
+    query=update.callback_query
+    query.answer()
+    
+    chat_id = query.message.chat.id
+    message_id = query.data[2:]
+
+    message = dict(published=True, message_id=message_id, chat_id=chat_id)
+    db_roaming['message'].update(message, ['message_id', 'chat_id'])
+
+    text = (
+        "Your message can now be discovered.\n"
+        "Start listening to others' messages to find a match:"
+    )
+    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Start', callback_data=f'M')]])) 
+
+def react_message(update: Update, context: CallbackContext):
+    query=update.callback_query
+    query.answer()
+    
+    chat_id = query.message.chat.id
+    message_id = query.data[2:]
+
+    liked_message_id = context.chat_data.get('liked_message_id',None)
+    if not liked_message_id: return
+
+    message = db_roaming['message'].find_one(message_id=message_id, chat_id=chat_id, published=False)
+    message['topic'] = liked_message_id
+    db_roaming['message'].update(message, ['published','message_id', 'chat_id'])
+    
+    liked_message = db_roaming['message'].find_one(message_id=liked_message_id)
+
+    text = (
+        'Curious how they react to your message?'
+    )
+    context.bot.send_message(liked_message['chat_id'], text)
+    
+    keyboard = [[
+        InlineKeyboardButton('Next', callback_data=f'N{message_id}'),
+        InlineKeyboardButton('Like', callback_data=f'Y{message_id}')
+    ]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    context.bot.send_voice(liked_message['chat_id'], message['data'], reply_markup=reply_markup)
+
+    text = (
+        "Your reaction was delivered directly\n"
+    )
+    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Check for new messages', callback_data=f'M')]])) 
 
 def stats(update: Update, context: CallbackContext):
-    if update.effective_chat.id != DEVELOPER_CHAT_ID: return
+    if update.effective_chat.id != bot_config['developer_chat_id']: return
     text = (
         f"# of users: {len(db_roaming['user'])}\n"
         f"# of message: {len(db_roaming['message'])}\n"
@@ -284,13 +363,13 @@ def stats(update: Update, context: CallbackContext):
     update.message.reply_text(text=text)
 
 def reset_ratings(update: Update, context: CallbackContext):
-    if update.effective_chat.id != DEVELOPER_CHAT_ID: return
+    if update.effective_chat.id != bot_config['developer_chat_id']: return
     db_roaming['rating'].delete()
     logger.info("ratings database reset")
     update.message.reply_text("done")
 
 def reset_database(update: Update, context: CallbackContext):
-    if update.effective_chat.id != DEVELOPER_CHAT_ID: return
+    if update.effective_chat.id != bot_config['developer_chat_id']: return
     for table in db_roaming.tables:
         db_roaming[table].delete()
     logger.info("database reset")
@@ -374,7 +453,7 @@ def random_prompt(update: Update, context: CallbackContext):
         context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode = ParseMode.HTML, reply_markup=reply_markup)
 
 def send_first_message_help(update: Update, context: CallbackContext):
-    if update.effective_chat.id != DEVELOPER_CHAT_ID: return
+    if update.effective_chat.id != bot_config['developer_chat_id']: return
     user_ids = set([user['chat_id'] for user in db_roaming['user'].find()])
     message_user_ids = set([msg['chat_id'] for msg in db_roaming['message'].find()])
     user_ids -= message_user_ids
@@ -449,6 +528,9 @@ def main() -> None:
     dispatcher.add_handler(CallbackQueryHandler(next_message, pattern='^M'))
     dispatcher.add_handler(CallbackQueryHandler(first_message_help, pattern='^F'))
     dispatcher.add_handler(CallbackQueryHandler(random_prompt, pattern='^P'))
+    dispatcher.add_handler(CallbackQueryHandler(save_message, pattern='^SM'))
+    dispatcher.add_handler(CallbackQueryHandler(discard_message, pattern='^DM'))
+    dispatcher.add_handler(CallbackQueryHandler(react_message, pattern='^RM'))
     dispatcher.add_handler(MessageHandler(Filters.text, handle_msg))
     dispatcher.add_handler(MessageHandler(Filters.voice, handle_voice_msg))
 

@@ -34,8 +34,7 @@ questions = [
     "I always asked myself",
     "I am really curious to know",
     "I am really curious to learn",
-    "I pondered over the question",
-    "I often get asked",
+    "Humankind pondered over the question",
     "People need to know",
     "People like to know",
     "People want to know",
@@ -62,6 +61,15 @@ prompts = [
     'What’s your favorite quote from a TV show/movie/book?',
     'How old were you when you had your first celebrity crush, and who was it?',
     'What’s one thing that can instantly make your day better?',
+]
+
+new_message_reaction = [
+    "Nice to hear you!",
+    "What a great voice you have!",
+    "Sonorous!",
+    "Your voice is music in my ear.",
+    "What a resonant voice you have!",
+    "That resonates with me!",
 ]
 
 logging.basicConfig(
@@ -180,20 +188,19 @@ def rating_yes(update: Update, context: CallbackContext):
         raise(Exception("invalid chat_id connected with message"))
     
     db_roaming['rating'].insert(rating_model(from_id=chat_id, to_id=sender['chat_id'], message_id=message_id, rating=1))
-    context.chat_data['liked_message_id'] = message_id
 
     sender_ratings = list(db_roaming['rating'].find(from_id=sender['chat_id'], to_id=chat_id, rating=1))
     mutual_like = True if len(sender_ratings) else False
     if mutual_like:
         text = (
-            f"You got a match with: {message['origin']}\n"
-            f"Check out there profile and hop on a voice call!"
+            f"<b>You got a match with: {message['origin']}</b>\n"
+            f"Check out their profile and hop on a voice call!"
         )
         context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
         
         text = (
-            f"You got a match with: {update.callback_query.from_user.mention_html()}\n"
-            f"Check out there profile and hop on a voice call!"
+            f"<b>You got a match with: {update.callback_query.from_user.mention_html()}</b>\n"
+            f"Check out their profile and hop on a voice call!\n"
             f"For you to recall, hear their voice again:"
         )
         context.bot.send_message(chat_id=sender['chat_id'], text=text, parse_mode=ParseMode.HTML)
@@ -208,18 +215,26 @@ def rating_yes(update: Update, context: CallbackContext):
     else:
         text = (
             "You liked this message.\n"
-            "How about sharing a reaction with the owner? Record it now and I'll deliver it directly."
+            "Eager to <b>Share your reaction</b>?\n"
         )
-        context.bot.send_message(chat_id=chat_id, text=text)
+        keyboard = [
+            [InlineKeyboardButton('Yes!!', callback_data=f'LRY{message_id}')],
+            [InlineKeyboardButton('Check for more messages', callback_data=f'M')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
         text = (
             f"Someone just listened to your voice and liked it!"
         )
-        keyboard = [[
-            InlineKeyboardButton('Check for new messages', callback_data=f'M')
-        ]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        context.bot.send_message(chat_id=sender['chat_id'], text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        context.bot.send_message(chat_id=sender['chat_id'], text=text, parse_mode=ParseMode.HTML)
+
+def like_reaction_yes(update: Update, context: CallbackContext):
+    query=update.callback_query
+    query.answer()
+    message_id = query.data[3:]
+    context.chat_data['liked_message_id'] = message_id
+    context.bot.send_message(query.message.chat.id, text="Hit the record button now and I'll deliver it directly.")
 
 def next_message(update: Update, context: CallbackContext):
     query=update.callback_query
@@ -254,9 +269,9 @@ def handle_voice_msg(update:Update, context: CallbackContext):
     if update.message.voice.duration < bot_config['minimum_voice_duration']:
         text = (
         'Oh this was a bit too short!\n'
-        'Please elaborate more.'
+        '<b>Please elaborate more.</b>'
         )
-        update.message.reply_text(text=text)
+        update.message.reply_text(text=text, parse_mode=ParseMode.HTML)
         return
 
     user = db_roaming['user'].find_one(chat_id=chat_id)
@@ -278,7 +293,7 @@ def handle_voice_msg(update:Update, context: CallbackContext):
     replace_option = len(list(db_roaming['message'].find(chat_id=chat_id, topic='general', published=True))) >= 1
 
     keyboard = [
-        ([InlineKeyboardButton('Send as reaction to your like', callback_data=f'RM{message_id}')] if 'liked_message_id' in context.chat_data else []),
+        ([InlineKeyboardButton('Send as reaction', callback_data=f'RM{message_id}')] if 'liked_message_id' in context.chat_data else []),
         [
             InlineKeyboardButton('Discard', callback_data=f'DM{message_id}'),
             InlineKeyboardButton(f'{"Replace my message" if replace_option else "Publish"}', callback_data=f'SM{message_id}'),
@@ -287,7 +302,8 @@ def handle_voice_msg(update:Update, context: CallbackContext):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     text = (
-        'Nice to hear you! What a great voice you have.\n'
+        f"{random.choice(new_message_reaction)}\n"+
+        ("<b>Let's send as reaction to your like?</b>" if 'liked_message_id' in context.chat_data else "<b>Let's publish this as your voice message?</b>")
     )
     update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
@@ -300,7 +316,7 @@ def discard_message(update: Update, context: CallbackContext):
 
     text = (
         "Your message was not published.\n"
-        "Just rewind and start another take."
+        "Simply rewind and <b>Record another take.</b>"
     )
     context.bot.send_message(chat_id=chat_id, text=text, parse_mode = ParseMode.HTML)
 
@@ -316,9 +332,9 @@ def save_message(update: Update, context: CallbackContext):
 
     text = (
         "Your message can now be discovered.\n"
-        "Start listening to others' messages to find a match:"
+        "<b>Start listening to others' messages to find a match:</b>"
     )
-    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Start', callback_data=f'M')]])) 
+    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Start', callback_data=f'M')]]), parse_mode=ParseMode.HTML) 
 
 def react_message(update: Update, context: CallbackContext):
     query=update.callback_query
@@ -337,7 +353,7 @@ def react_message(update: Update, context: CallbackContext):
     liked_message = db_roaming['message'].find_one(message_id=liked_message_id)
 
     text = (
-        'Curious how they react to your message?'
+        'Here is how they react to your message:'
     )
     context.bot.send_message(liked_message['chat_id'], text)
     
@@ -351,7 +367,7 @@ def react_message(update: Update, context: CallbackContext):
     text = (
         "Your reaction was delivered directly\n"
     )
-    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Check for new messages', callback_data=f'M')]])) 
+    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Check out more messages', callback_data=f'M')]])) 
 
 def stats(update: Update, context: CallbackContext):
     if update.effective_chat.id != bot_config['developer_chat_id']: return
@@ -444,7 +460,7 @@ def random_prompt(update: Update, context: CallbackContext):
         text = (
             f'Still hesitant to record your first voice message?\n'
             f'Recording a voice message may feel awkward at first. That is ok and normal.\n'
-            f'If you like, you can hear my thoughts about this topic or some examples.'
+            f'If you like, you can hear My thoughts about this topic and Some examples by others.'
         )
         keyboard = [[
             InlineKeyboardButton('More tips please for my first voice message', callback_data=f'F')
@@ -487,26 +503,29 @@ def first_message_help(update: Update, context: CallbackContext):
 
     ratings = db_roaming['rating'].find(from_id={'not':chat_id}, to_id={'not':chat_id}, rating=1)
     message_ids = set([msg['message_id'] for msg in ratings])
-    if not len(message_ids):
-        return
-    text = (
-        f"Curious what others' messages are about?:\n"
-    )
-    # send first example message
-    context.bot.send_message(chat_id, text)
-    random_msg_id = random.choice(list(message_ids))
-    message_ids.remove(random_msg_id)
-    random_msg = db_roaming['message'].find_one(message_id=random_msg_id)
-    if random_msg:
-        context.bot.send_voice(chat_id, voice=random_msg['data'])
+    if len(message_ids):
+        text = (
+            f"Curious what others' messages are about?:\n"
+        )
+        # send first example message
+        context.bot.send_message(chat_id, text)
+        random_msg_id = random.choice(list(message_ids))
+        random_msg = db_roaming['message'].find_one(message_id=random_msg_id)
+        if random_msg:
+            context.bot.send_voice(chat_id, voice=random_msg['data'])
+        message_ids.remove(random_msg_id)
     #send second example message
-    if not len(message_ids):
-        return
-    random_msg_id = random.choice(list(message_ids))
-    message_ids.remove(random_msg_id)
-    random_msg = db_roaming['message'].find_one(message_id=random_msg_id)
-    if random_msg:
-        context.bot.send_voice(chat_id, voice=random_msg['data'])
+    if len(message_ids):
+        random_msg_id = random.choice(list(message_ids))
+        random_msg = db_roaming['message'].find_one(message_id=random_msg_id)
+        if random_msg:
+            context.bot.send_voice(chat_id, voice=random_msg['data'])
+    
+    text = (
+        "Ready for your first message?\n"
+        "Hit record and let's go!"
+    )
+    context.bot.send_message(chat_id, text)
 
 def main() -> None:
     # Create the Updater and pass it your bot's token.
@@ -531,6 +550,7 @@ def main() -> None:
     dispatcher.add_handler(CallbackQueryHandler(save_message, pattern='^SM'))
     dispatcher.add_handler(CallbackQueryHandler(discard_message, pattern='^DM'))
     dispatcher.add_handler(CallbackQueryHandler(react_message, pattern='^RM'))
+    dispatcher.add_handler(CallbackQueryHandler(like_reaction_yes, pattern='^LRY'))
     dispatcher.add_handler(MessageHandler(Filters.text, handle_msg))
     dispatcher.add_handler(MessageHandler(Filters.voice, handle_voice_msg))
 
